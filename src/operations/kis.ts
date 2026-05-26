@@ -6,7 +6,7 @@ import { type MorphPlan } from "./types";
 import { closestLineParam } from "../util/lines";
 
 /** Smallest strictly-positive root of A h² + B h + C, or null. */
-function smallestPositiveRoot(A: number, B: number, C: number): number | null {
+export function smallestPositiveRoot(A: number, B: number, C: number): number | null {
   if (Math.abs(A) < 1e-12) {
     if (Math.abs(B) < 1e-12) return null;
     const h = -C / B;
@@ -26,7 +26,7 @@ function smallestPositiveRoot(A: number, B: number, C: number): number | null {
  * become coplanar (so they merge into one quad — i.e. Join). Both apexes are
  * C_f = c_f + h*n_f and C_g = c_g + h*n_g; we require P1,P2,C_f,C_g coplanar.
  */
-function joinHeight(
+export function joinHeight(
   P1: Vector3,
   P2: Vector3,
   cf: Vector3,

@@ -37,15 +37,28 @@ interface Pending {
   y: number;
 }
 
-interface Drag {
+/** One built operation: its plan plus whether its max end welds. */
+interface PlanSlot {
   plan: MorphPlan;
+  allowMax: boolean;
+}
+
+interface Drag {
+  // The base operation (truncate / kis) tracks the mouse whenever Shift is up.
+  base: PlanSlot;
+  sel: Set<number> | null; // participating subset, retained to (re)build the shift plan
+  // The Shift form (snub / gyro) is built lazily WHEN Shift goes down, frozen at the
+  // base's then-current level so the skew interpolates out of it. Rebuilt on each press.
+  shift: PlanSlot | null; // null when snub/gyro is unavailable for this handle
+  shiftHeld: boolean; // live Shift state; selects which plan is active
+  frozenWeld: boolean; // base's weld state at Shift-press → the snub/gyro commit weld
+  lastRay: Ray | null; // last pick ray, so a Shift toggle can re-preview in place
   kind: MarkerKind;
   id: number;
-  allowMax: boolean;
   hasSelection: boolean; // operating on a multi-select subset (drives green feedback)
   selCount: number | null; // size of that subset (null = whole solid), for the label
   addedToSelection: boolean; // this Cmd-drag added the handle to the selection (temp)
-  t: number;
+  t: number; // active plan's current parameter (base level when Shift up; skew when down)
   weld: boolean;
 }
 
@@ -227,6 +240,15 @@ export class DragController {
   }
 
   private onModifierChange(e: KeyboardEvent): void {
+    // Shift held/released DURING a drag morphs truncate↔snub / kis↔gyro live.
+    if (this.mode === "dragging" && this.drag) {
+      if (e.shiftKey !== this.drag.shiftHeld) {
+        if (e.shiftKey) this.enterShift(); // freeze base level, build snub/gyro
+        else this.drag.shiftHeld = false; // revert to base tracking the mouse
+        if (this.drag.lastRay) this.updateDragPreview(this.drag.lastRay);
+      }
+      return;
+    }
     if (this.mode !== "idle" || !config.features.multiSelect) return;
     const multi = IS_MAC ? e.metaKey : e.ctrlKey;
     if (multi === this.hoverMulti) return;
@@ -299,35 +321,60 @@ export class DragController {
     }
     if (this.mode === "dragging" && this.drag) {
       const ray = this.picker.ray(e.clientX, e.clientY, this.canvas, this.camera);
-      const snap = this.drag.plan.snap(ray);
+      this.updateDragPreview(ray);
+    }
+  }
+
+  /** The plan the current Shift state selects (snub/gyro while Shift is held and
+   *  available, otherwise the base truncate/kis). */
+  private activeSlot(d: Drag): PlanSlot {
+    return d.shiftHeld && d.shift ? d.shift : d.base;
+  }
+
+  /** Snap the active plan to `ray`, store the resulting t/weld, and refresh the
+   *  preview, drag marker and range line. Driven by pointer moves and by Shift
+   *  toggles (which re-run it against the last ray). */
+  private updateDragPreview(ray: Ray): void {
+    const d = this.drag!;
+    d.lastRay = ray;
+    const usingShift = d.shiftHeld && d.shift !== null;
+    const active = this.activeSlot(d);
+    const snap = active.plan.snap(ray);
+    let tEff = snap.t;
+    let weld: boolean;
+    if (usingShift) {
+      // Snub/gyro: the skew is in [0,1] and the topology is fixed; whether it welds
+      // (partial vs full) is inherited from the base, not from reaching the end.
+      tEff = Math.max(0, Math.min(1, snap.t));
+      weld = d.frozenWeld;
+    } else {
       // No end magnetism: t follows the cursor directly. Only the very end welds
       // (rectify / join); if that end is disabled, stop just short of it.
-      let tEff = snap.t;
-      let weld = false;
+      weld = false;
       if (snap.t >= 1) {
-        if (this.drag.allowMax) weld = true;
+        if (active.allowMax) weld = true;
         else tEff = MAX_T_WITHOUT_WELD;
       }
-      this.drag.t = tEff;
-      this.drag.weld = weld;
-      const verts = this.drag.plan.positions(tEff);
-      // Hide the big hover markers during the drag (as in the non-selection case).
-      // When operating on a selection, the green "sticks around" via the small drag
-      // marker + range line instead.
-      this.view.showPreview({ vertices: verts, faces: this.drag.plan.previewFaces });
-      const green = this.drag.hasSelection;
-      this.view.setDragMarker(
-        snap.point, // small sphere on the targeted vertex
-        green ? config.render.selectedColor : config.render.dragMarkerColor,
-      );
-      if (snap.highlight)
-        this.view.setEdgeHighlight(
-          snap.highlight.a,
-          snap.highlight.b,
-          green ? config.render.selectedColor : config.render.dragLineColor,
-        );
-      else this.view.clearEdgeHighlight();
     }
+    d.t = tEff;
+    d.weld = weld;
+    const verts = active.plan.positions(tEff);
+    // Hide the big hover markers during the drag (as in the non-selection case).
+    // When operating on a selection, the green "sticks around" via the small drag
+    // marker + range line instead.
+    this.view.showPreview({ vertices: verts, faces: active.plan.previewFaces });
+    const green = d.hasSelection;
+    this.view.setDragMarker(
+      snap.point, // small sphere on the targeted vertex
+      green ? config.render.selectedColor : config.render.dragMarkerColor,
+    );
+    if (snap.highlight)
+      this.view.setEdgeHighlight(
+        snap.highlight.a,
+        snap.highlight.b,
+        green ? config.render.selectedColor : config.render.dragLineColor,
+      );
+    else this.view.clearEdgeHighlight();
   }
 
   private startDrag(): void {
@@ -355,8 +402,10 @@ export class DragController {
       else this.selection.clear(); // dragging an unselected handle drops the selection
     }
 
-    const built = this.buildPlan(kind, id, p.shift, sel);
-    if (!built) {
+    // Build the base operation (truncate / kis). The Shift form (snub / gyro) is built
+    // lazily when Shift goes down, so it can freeze the base's level at that instant.
+    const base = this.buildPlan(kind, id, false, sel);
+    if (!base) {
       if (addedToSelection) this.selection.toggle(kind, id); // undo the temporary add
       this.mode = "idle";
       this.pending = null;
@@ -364,16 +413,35 @@ export class DragController {
     }
     this.solver = null; // abandon any in-progress relaxation
     this.drag = {
-      ...built, kind, id,
+      base, sel,
+      shift: null, shiftHeld: false, frozenWeld: false, lastRay: null,
+      kind, id,
       hasSelection: sel !== null,
       selCount: sel ? sel.size : null,
       addedToSelection,
       t: 0, weld: false,
     };
     this.mode = "dragging";
-    const verts = this.drag.plan.positions(0);
-    this.view.showPreview({ vertices: verts, faces: this.drag.plan.previewFaces });
+    // Shift already held at grab time → enter snub/gyro immediately, frozen at t=0.
+    if (p.shift) this.enterShift();
+    const active = this.activeSlot(this.drag);
+    const verts = active.plan.positions(0);
+    this.view.showPreview({ vertices: verts, faces: active.plan.previewFaces });
     // The drag marker is positioned on the first move (when we have a snap point).
+  }
+
+  /**
+   * Shift went down mid-drag: freeze the base at its current level and build the
+   * snub/gyro plan from it (apex / cut fractions seeded by `drag.t`). The skew then
+   * interpolates out of that frozen state, and the welded-vs-partial form is inherited
+   * from the base's current weld. A null plan (op off / wrong handle) means Shift is
+   * inert and the base keeps driving.
+   */
+  private enterShift(): void {
+    const d = this.drag!;
+    d.shift = this.buildPlan(d.kind, d.id, true, d.sel, d.t);
+    d.frozenWeld = d.weld;
+    d.shiftHeld = true;
   }
 
   private buildPlan(
@@ -381,13 +449,14 @@ export class DragController {
     id: number,
     shift: boolean,
     sel: Set<number> | null,
-  ): { plan: MorphPlan; allowMax: boolean } | null {
+    baseT = 1, // snub/gyro: the frozen base level the skew interpolates out of
+  ): PlanSlot | null {
     const ops = config.features.operations;
     try {
       if (kind === "vertex") {
         if (shift) {
           if (!ops.snub) return null;
-          return { plan: buildSnub(this.current, id, sel), allowMax: true };
+          return { plan: buildSnub(this.current, id, sel, this.inView, baseT), allowMax: true };
         }
         if (!ops.truncate) return null;
         return {
@@ -397,7 +466,7 @@ export class DragController {
       } else {
         if (shift) {
           if (!ops.gyro) return null;
-          return { plan: buildGyro(this.current, id, sel), allowMax: true };
+          return { plan: buildGyro(this.current, id, sel, this.inView, baseT), allowMax: true };
         }
         if (!ops.kis) return null;
         return { plan: buildKis(this.current, id, sel), allowMax: ops.join };
@@ -424,9 +493,10 @@ export class DragController {
           this.selection.toggle(this.drag.kind, this.drag.id);
         this.view.setPolyhedron(this.current, this.invalid);
       } else {
-        const mesh: Mesh = this.drag.plan.commit(this.drag.t, this.drag.weld);
+        const active = this.activeSlot(this.drag);
+        const mesh: Mesh = active.plan.commit(this.drag.t, this.drag.weld);
         const label = DragController.label(
-          this.drag.plan.kind,
+          active.plan.kind,
           this.drag.weld,
           this.drag.selCount,
         );

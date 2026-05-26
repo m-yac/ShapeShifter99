@@ -7,28 +7,30 @@ Currently, *all code in this repo is AI-generated*, based primarily on the follo
 Clicking and dragging a degree-n vertex inwards along a connected edge:
 - Truncate (variable): break up vertex into n many degree-3 vertices surrounding an n-gon face
 - Rectify/Ambo: new vertices combine along old edges, deleting old edges
-- Mouse can be anywhere, but snap to the closest original edge when calculating how far it’s been dragged
+- Mouse can be anywhere, but snap to the closest original edge facing the camera when calculating how far it’s been dragged
 - The new vertex on that edge should be exactly at the mouse’s snapped position
-- Minimum position (no drag) and maximum position (rectify) are magnetic, and nothing happens if you go past them
+- Minimum is the original vertex position (does nothing if the mouse is released here) and maximum is at rectification
 
 Clicking and dragging the center of an n-gon face outwards along its normal:
 - Kis (variable): break up face n many 3-gon faces surrounding an n-deg vertex
 - Join: new faces combine along old edges, deleting old edges
 - Mouse can be anywhere, but snap to a perpendicular line from the center when calculating how far it’s been dragged
 - The new center vertex should be exactly at the mouse’s snapped position
-- Minimum position (no drag) and maximum position (join) are magnetic, and nothing happens if you go past them
+- Minimum is when the vertex is flush with the face (does nothing if the mouse is released here) and maximum is at joining
 
-Holding shift while dragging a degree-2n vertex:
-- Snub: break up the new face into n many 3-gon faces surrounding an n-gon face, or just an edge if n=2
-- Same mouse behavior, except dragging along the edge stops truncating/rectifying and instead moves outward the vertices that are only part of the new 3-gon faces, and inward the vertices that are also part of the new n-gon face, skewing the proportions of the faces
-- Whatever edge is dragged along is made to be only in a new 3-gon face, thus by moving your drag to an adjacent edge you can get the other chiral form
-- The vertex on that edge should be exactly at the mouse’s snapped position
+Holding shift while dragging a degree-2n vertex (i.e. partway through a truncation/rectification):
+— Snub: Morphs the truncation/rectification (frozen at its current level) into a snub by breaking up the new face into n many 3-gon faces surrounding an n-gon face, or just an edge if n=2
+- If starting with a truncation instead of a rectification, the result should only be considered "partial", since the new vertices are not unified like in a proper snub
+- This only applies to vertices of even degree, so if any of the vertices to which this would apply are odd degree  - or if the vertices are not all connected or contain an odd cycle, which would leave us unable to determine a consistent chirality - holding shift does nothing
+- Mouse can still be anywhere and still snaps to an original edge, but now dragging along the edge instead moves outward the vertices that are only part of the new 3-gon faces, and inward the vertices that are also part of the new n-gon face, skewing the proportions of the faces
+- By changing which edge you drag along, you can change which chiral form you get
 
-Holding shift while dragging a 2n-gon face:
-- Gyro: break up new vertex into n many degree-3 vertices surrounding a degree-n vertex, or just an edge if n=2
-- Mouse can still be anywhere, but now it snaps to the new edges connected to the new degree-n vertex
-- Whatever edge is dragged along is made to have a new degree-3 vertex, thus by moving your drag to an adjacent edge you can get the other chiral form
-- The new vertex on that edge should be exactly at the mouse’s snapped position
+Holding shift while dragging a 2n-gon face (i.e. partway through a kis/join):
+— Gyro: Morphs the kis/join (frozen at its current level) into a gyro by breaking up the new vertex into n many degree-3 vertices surrounding a degree-n vertex, or just an edge if n=2
+- If starting with a kis instead of a join, the result should only be considered "partial", since the new faces are not unified like in a proper gyro
+- This only applies to faces with an even number of sides, so if any of the faces to which this would apply have an odd number of sides - or if the faces are not all connected or have an odd cycle, which would leave us unable to determine a consistent chirality - holding shift does nothing
+- Mouse can still be anywhere, but now snaps to the (not visible) lines connecting the center vertex to the midpoints of the 2n outer edges, and dragging along them moves outward the new degree-3 vertices (which are connected to the center vertex and the outer edge's two endpoints) keeping the center vertex in the center
+- By changing which line you drag along, you can change which chiral form you get
 
 After releasing the mouse:
 - Forces are applied to vertices in order to bring them into a correct configuration
