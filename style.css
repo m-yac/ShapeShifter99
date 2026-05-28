@@ -47,7 +47,7 @@ body {
     0 0 26px rgba(0, 0, 0, 0.9) inset;
 }
 /* The lit raster: the character-grid origin (0,0). The 3D canvas, the text
-   overlays, and the CRT pixel mask all live here and share its top-left. */
+   overlays, and the pixel mask all live here and share its top-left. */
 #grid {
   position: relative;
 }
@@ -72,17 +72,6 @@ canvas {
   text-shadow: var(--glow, 0 0 6px rgba(78, 224, 122, 0.45));
   white-space: pre;
 }
-/* Status readout: the polyhedron block (name + ✓, signature, snub/gyro) and
-   the selection block (count + snub/gyro). Each is moved into the body of
-   its own box-drawing popup by ui/readout.ts — POLYHEDRON bottom-left and
-   SELECTION top-left — so both inherit the green phosphor + glow from the
-   popup's .gui. white-space:pre keeps each block's intrinsic line widths so
-   its frame can be sized to hug the content. */
-#poly-readout,
-#sel-readout {
-  white-space: pre;
-  width: max-content; /* shrink to the widest line so the frame can hug it */
-}
 .cannotSnubGyro {
   opacity: 0.4;
 }
@@ -102,6 +91,10 @@ canvas {
   overflow-y: auto;
   overflow-x: hidden;
 }
+.popup-resize {
+  white-space: pre;
+  width: max-content; /* shrink to the widest line so the frame can hug it */
+}
 .popup-body::-webkit-scrollbar {
   width: 6px;
 }
@@ -113,7 +106,7 @@ canvas {
 }
 /* The HISTORY popup's body scrolls when it overflows; snap each (whole-row)
    entry to the scrollport top so resting scroll positions stay on the
-   character grid (and thus aligned to the CRT pixel mask). */
+   character grid (and thus aligned to the pixel mask). */
 .history-body {
   scroll-snap-type: y mandatory;
 }
@@ -146,17 +139,17 @@ canvas {
   font-style: italic;
 }
 /* --------------------------------------------------------------------
-   CRT effect layer over the lit raster: a phosphor pixel mask aligned to
+   Pixel effect layer over the lit raster: a phosphor pixel mask aligned to
    the font's 2px pixels, plus a corner vignette. Click-through, so text
    stays selectable. Sits at the grid origin so the mask lines up with the
    text pixels (background-position 0 0 == the grid's top-left). */
-#crt {
+#pixels {
   position: absolute;
   inset: 0;
   z-index: 3;
   pointer-events: none;
 }
-#crt::before {
+#pixels::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -165,8 +158,8 @@ canvas {
   background-position: 0 0;
 }
 /* "lines": 1px dark lines every --pixel-size in both axes => a grid on
-   every font pixel (the original CRT raster look). */
-[data-pixel-mask="lines"] #crt::before {
+   every font pixel (the original pixel raster look). */
+[data-pixel-mask="lines"] #pixels::before {
   background-image:
     repeating-linear-gradient(
       to right,
@@ -188,7 +181,7 @@ canvas {
    => a phosphor dot per pixel with darkened gaps between. On hi-DPI the
    circle is drawn with many device pixels so it looks round; at 1x it's a
    2x2 swatch but the dark corners still read as a grid. */
-[data-pixel-mask="dots"] #crt::before {
+[data-pixel-mask="dots"] #pixels::before {
   background-image: radial-gradient(
     circle at center,
     transparent 0%,
@@ -197,7 +190,7 @@ canvas {
   );
   background-size: var(--pixel-size, 2px) var(--pixel-size, 2px);
 }
-#crt::after {
+#pixels::after {
   content: "";
   position: absolute;
   inset: 0;

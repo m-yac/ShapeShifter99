@@ -61,14 +61,15 @@ export class Readout {
     // on every layout: the polyhedron info bottom-left, the selection info top-left.
     this.polyBox = new Popup(screen, { cols: 12, rows: 5, title: "POLYHEDRON" });
     this.polyBox.mount();
-    this.polyBox.body.appendChild(document.getElementById("poly-readout")!);
+    this.polyEl = document.createElement("div");
+    this.polyEl.className = "popup-resize";
+    this.polyBox.body.appendChild(this.polyEl);
 
     this.selBox = new Popup(screen, { cols: 12, rows: 4, title: "SELECTION" });
     this.selBox.mount();
-    this.selBox.body.appendChild(document.getElementById("sel-readout")!);
-
-    this.polyEl = document.getElementById("poly-readout");
-    this.selEl = document.getElementById("sel-readout");
+    this.selEl = document.createElement("div");
+    this.selEl.className = "popup-resize";
+    this.selBox.body.appendChild(this.selEl);
 
     this.polyBox.el.style.display = "none"; // nothing to show until setPoly()
     this.selBox.el.style.display = "none"; //  shown only while something is selected
