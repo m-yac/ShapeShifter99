@@ -302,11 +302,12 @@ export const config = {
     // discovery of the run uses `bannerFirst` instead); `lines` is the body,
     // one entry per centered row ("" = a blank row).
     discoveryPopup: {
-      banner: "CONGRATULATIONS YOU MADE A MISSING SHAPE",
-      bannerFirst: "CONGRATULATIONS YOU MADE A MISSING SHAPE",
+      banner: ["CONGRATULATIONS YOU MADE A MISSING SHAPE"],
+      bannerFirst: ["CONGRATULATIONS YOU MADE A MISSING SHAPE", 
+                    "",
+                    "Keep dragging corners in and faces out",
+                    "to keep going, or undo to try something new"],
       lines: [
-        "{banner}",
-        "",
         "Its name is: {name}",
         "({type})",
         "",

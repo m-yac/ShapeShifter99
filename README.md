@@ -2,6 +2,8 @@
 
 An in-progress game(?) where you try to build as many polyhedra you can using interactive versions of Conway operations.
 
+Although there isn't an indication in the UI of this yet, you can hold Control (or Command on MacOS) and click to select a group of corners/faces to target (i.e. instead of always targeting all of them). Additionally, to perform the Snub or Gyro moves when you're able, hold Shift. Finally, the hotkeys C, G, and F allow you to experiment with different ways of normalizing polyhedra. 
+
 **Warning:** Currently, *almost all of the code in this repo is AI-generated*. The core of the app is based on the notes I wrote below, but the visuals were developed in a more iterative fashion (since I ended up needing to see some examples to decide what I wanted to go with for this first version). Despite this, some of the text is my own – especially the strings in `src/config.ts`, but also some of the code in `src/main.ts` and `src/ui/readout.ts` (among a few others – since sometimes it was easier and faster to just go and fix something myself).
 
 ### Original Notes

@@ -27,12 +27,11 @@ export class DiscoveryPopup {
     const banner = first ? cfg.bannerFirst : cfg.banner;
     const fill = (s: string): string =>
       s
-        .replace("{banner}", banner)
         .replace("{name}", name)
         .replace("{type}", type)
         .replace("{count}", String(count))
         .replace("{total}", String(config.discovery.total));
-    const lines = cfg.lines.map(fill);
+    const lines = [...banner, "", ...cfg.lines.map(fill)];
 
     const inner = Math.max(...lines.map((l) => l.length)) + 4;
     const cols = Math.min(this.screen.cols, inner + 2);

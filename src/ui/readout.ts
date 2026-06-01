@@ -176,7 +176,7 @@ export class Readout {
       ? "X invalid (faces won't planarize)"
       : (this.name ?? "Unnamed non-uniform polyhedron");
     const status = this.solving ? "  …relaxing" : "";
-    this.polyEl.textContent = `${title}${status}\n${describeSignature(this.signature)}\n`
+    this.polyEl.textContent = `${title}${status}\n${describeSignature(this.signature)}\nSHIFT: `
 
     let snub = document.createElement("span");
     let gyro = document.createElement("span");
@@ -203,7 +203,7 @@ export class Readout {
         this.drag.count ?? (onFaces ? this.poly.faces.length : this.poly.vertices.length);
       }
       const noun = plural(onFaces ? "face" : "vertex", count);
-      this.selEl.textContent = `${verb} ${count} ${noun}\n`;
+      this.selEl.textContent = `${verb} ${count} ${noun}\nSHIFT: `;
 
       let snub = document.createElement("span");
       let gyro = document.createElement("span");
