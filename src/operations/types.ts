@@ -3,7 +3,13 @@ import { type Mesh } from "../geometry/HalfEdge";
 import { type ColorSet } from "../geometry/colors";
 
 /** The kind of interactive operation a gesture maps to. */
-export type OperationKind = "truncate" | "kis" | "snub" | "gyro";
+export type OperationKind =
+  | "truncate"
+  | "kis"
+  | "snub"
+  | "gyro"
+  | "chamfer"
+  | "subdivide";
 
 /**
  * A live, in-progress operation. Built when a drag starts; the topology is fixed

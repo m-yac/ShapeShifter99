@@ -50,6 +50,8 @@ function describeSet(
   ids: Set<number> | null,
   kind: MarkerKind,
 ): string {
+  // Edge operations (chamfer / subdivide) are always global — every edge.
+  if (kind === "edge") return "all edges";
   const onFaces = kind === "face";
   const elemCount = onFaces ? poly.faces.length : poly.vertices.length;
   // The whole solid → just "all faces" / "all vertices".
@@ -286,20 +288,26 @@ export class Readout {
       } else {
         line = `Selected ${describeSet(this.poly, this.selection, this.selectionKind ?? "face")}`;
       }
-      this.selEl.textContent = `${line}\nSHIFT: `;
-
-      if (onFaces) {
-        const gyro = document.createElement("span");
-        const canDoGyro = canGyro(this.poly, effSel);
-        gyro.textContent = `Gyro: ${canDoGyro ? "✓" : "X"}  `;
-        if (!canDoGyro) { gyro.className = 'cannotSnubGyro'; }
-        this.selEl.append(gyro);
+      // Edge operations (chamfer / subdivide) have no Shift (snub/gyro) form, so
+      // they show just the operation line; vertex/face drags add the capability line.
+      const isEdge = (this.drag?.selKind ?? this.selectionKind) === "edge";
+      if (isEdge) {
+        this.selEl.textContent = line;
       } else {
-        const snub = document.createElement("span");
-        const canDoSnub = canSnub(this.poly, effSel);
-        snub.textContent = `Snub: ${canDoSnub ? "✓" : "X"}  `;
-        if (!canDoSnub) { snub.className = 'cannotSnubGyro'; }
-        this.selEl.append(snub);
+        this.selEl.textContent = `${line}\nSHIFT: `;
+        if (onFaces) {
+          const gyro = document.createElement("span");
+          const canDoGyro = canGyro(this.poly, effSel);
+          gyro.textContent = `Gyro: ${canDoGyro ? "✓" : "X"}  `;
+          if (!canDoGyro) { gyro.className = 'cannotSnubGyro'; }
+          this.selEl.append(gyro);
+        } else {
+          const snub = document.createElement("span");
+          const canDoSnub = canSnub(this.poly, effSel);
+          snub.textContent = `Snub: ${canDoSnub ? "✓" : "X"}  `;
+          if (!canDoSnub) { snub.className = 'cannotSnubGyro'; }
+          this.selEl.append(snub);
+        }
       }
       this.selBox.el.style.display = "";
     }

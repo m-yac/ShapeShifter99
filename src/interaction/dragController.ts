@@ -14,6 +14,11 @@ import { buildTruncate, closestIncidentEdge } from "../operations/truncate";
 import { buildKis } from "../operations/kis";
 import { buildSnub } from "../operations/snub";
 import { buildGyro } from "../operations/gyro";
+import { buildChamfer } from "../operations/chamfer";
+import { buildSubdivide } from "../operations/subdivide";
+import { faceCentroidHE, faceNormalHE } from "../geometry/polyhedron";
+import { type HalfEdge } from "../geometry/HalfEdge";
+import { closestLineParam, distancePointToRay } from "../util/lines";
 import { operationLabel, classifySelection, type OpDescriptor } from "../operations/naming";
 import { RelaxSolver, type Strategy } from "../solver/solver";
 import { extractTopology } from "../solver/topology";
@@ -499,7 +504,11 @@ export class DragController {
   }
 
   private allMarkers(): Marker[] {
-    return [...this.view.vertexMarkers, ...this.view.faceMarkers];
+    return [
+      ...this.view.vertexMarkers,
+      ...this.view.faceMarkers,
+      ...this.view.edgeMarkers,
+    ];
   }
 
   /** Per-vertex degree (number of incident faces = edge count on a closed solid)
@@ -534,6 +543,8 @@ export class DragController {
    * click adds — every handle sharing the hovered one's arity.
    */
   private gestureArity(m: Marker): number | null {
+    // Edges have no arity grouping (chamfer / subdivide are always global).
+    if (m.kind === "edge") return null;
     return this.altHeld ? this.arityOf(m) : null;
   }
 
@@ -590,7 +601,9 @@ export class DragController {
     }
     if (this.mode === "pending" && this.pending) {
       const moved = Math.hypot(e.clientX - this.pending.x, e.clientY - this.pending.y);
-      if (moved > DRAG_START_PIXELS) this.startDrag();
+      if (moved > DRAG_START_PIXELS) {
+        this.startDrag(this.picker.ray(e.clientX, e.clientY, this.canvas, this.camera));
+      }
     }
     if (this.mode === "dragging" && this.drag) {
       const ray = this.picker.ray(e.clientX, e.clientY, this.canvas, this.camera);
@@ -693,7 +706,7 @@ export class DragController {
     else this.view.clearEdgeHighlight();
   }
 
-  private startDrag(): void {
+  private startDrag(ray: Ray): void {
     const p = this.pending!;
     if (!p.marker) {
       // Left-drag on empty space does nothing (orbit is the right button).
@@ -703,6 +716,13 @@ export class DragController {
     }
     const kind = p.marker.kind;
     const id = p.marker.id;
+
+    // Edge handles drive chamfer / subdivide (always global, no modifiers / Shift).
+    // The drag axis (which the chosen op depends on) is fixed now from the cursor.
+    if (kind === "edge") {
+      this.startEdgeDrag(p.marker, ray);
+      return;
+    }
 
     // A modifier drag (Option / Cmd-Ctrl) may temporarily fold handles into the
     // selection and drag the whole set — but TEMPORARILY: if the drag commits nothing,
@@ -828,6 +848,128 @@ export class DragController {
     }
   }
 
+  /** The half-edge of the undirected edge (a,b) in the current DCEL, or null. */
+  private halfEdgeFor(a: number, b: number): HalfEdge | null {
+    for (const h of this.current.dcel.halfedges) {
+      if (h.origin.id === a && h.next.origin.id === b) return h;
+    }
+    return null;
+  }
+
+  /**
+   * The three drag axes of an edge handle, as lines through the edge midpoint:
+   * perpendicular to the edge within each bordering face (→ chamfer), and along the
+   * edge normal — the mean of the two face normals (→ subdivide).
+   */
+  private edgeAxes(a: number, b: number): {
+    midpoint: Vector3;
+    faceA: number;
+    faceB: number;
+    axes: Array<{ which: "A" | "B" | "normal"; dir: Vector3 }>;
+  } | null {
+    const he = this.halfEdgeFor(a, b);
+    if (!he || !he.twin) return null;
+    const fA = he.face;
+    const fB = he.twin.face;
+    const pa = this.current.vertices[a];
+    const pb = this.current.vertices[b];
+    const mid = pa.clone().add(pb).multiplyScalar(0.5);
+    const edgeDir = pb.clone().sub(pa).normalize();
+    // Component of v perpendicular to the edge (within-face sweep direction).
+    const perp = (v: Vector3) => v.clone().sub(edgeDir.clone().multiplyScalar(v.dot(edgeDir)));
+    const outward = (f: typeof fA) => {
+      const n = faceNormalHE(f);
+      if (n.dot(faceCentroidHE(f)) < 0) n.negate();
+      return n;
+    };
+    const dirA = perp(faceCentroidHE(fA).sub(mid));
+    const dirB = perp(faceCentroidHE(fB).sub(mid));
+    const normalDir = outward(fA).add(outward(fB)).normalize();
+    return {
+      midpoint: mid,
+      faceA: fA.id,
+      faceB: fB.id,
+      axes: [
+        { which: "A", dir: dirA },
+        { which: "B", dir: dirB },
+        { which: "normal", dir: normalDir },
+      ],
+    };
+  }
+
+  /** Begin a chamfer / subdivide drag from an edge handle: pick the nearest axis to
+   *  the cursor ray, then build the corresponding operation. */
+  private startEdgeDrag(marker: Marker, ray: Ray): void {
+    const ops = config.features.operations;
+    const info = marker.edge && this.edgeAxes(marker.edge[0], marker.edge[1]);
+    if (!marker.edge || !info) {
+      this.mode = "idle";
+      this.pending = null;
+      return;
+    }
+    // Pick the axis whose infinite line passes nearest the cursor ray.
+    let best: { which: "A" | "B" | "normal"; dist: number } | null = null;
+    for (const ax of info.axes) {
+      if (ax.dir.lengthSq() < 1e-12) continue;
+      const s = closestLineParam(info.midpoint, ax.dir, ray.origin, ray.direction);
+      const point = info.midpoint.clone().add(ax.dir.clone().multiplyScalar(s));
+      const dist = distancePointToRay(point, ray);
+      if (!best || dist < best.dist) best = { which: ax.which, dist };
+    }
+    if (!best) {
+      this.mode = "idle";
+      this.pending = null;
+      return;
+    }
+
+    let slot: PlanSlot | null = null;
+    try {
+      if (best.which === "normal") {
+        if (ops.subdivide) {
+          slot = { plan: buildSubdivide(this.current, marker.edge, this.inView), allowMax: true };
+        }
+      } else if (ops.chamfer) {
+        const track = best.which === "A" ? info.faceA : info.faceB;
+        slot = { plan: buildChamfer(this.current, marker.edge, track, this.inView), allowMax: true };
+      }
+    } catch (err) {
+      console.warn("Edge operation unavailable:", err);
+      slot = null;
+    }
+    if (!slot) {
+      this.mode = "idle";
+      this.pending = null;
+      return;
+    }
+
+    this.solver = null;
+    this.shapes.setSolving(false);
+    this.drag = {
+      base: slot,
+      sel: null,
+      shift: null,
+      shiftHeld: false,
+      frozenWeld: false,
+      lastRay: null,
+      kind: "edge",
+      id: marker.id,
+      hasSelection: false,
+      selCount: null,
+      restore: null,
+      t: 0,
+      weld: false,
+    };
+    this.mode = "dragging";
+    const verts = slot.plan.positions(0);
+    this.view.showPreview(
+      { vertices: verts, faces: slot.plan.previewFaces },
+      { faceColors: slot.plan.previewFaceColors(0), edgeColors: slot.plan.previewEdgeColors },
+    );
+    this.readout.setDrag({
+      kind: slot.plan.kind, weld: false, t: 0, selIds: null, selKind: "edge",
+    });
+  }
+
   private onUp(e: PointerEvent, pointerStillDown: boolean = false): void {
     if (e.button !== 0) {
       this.controls.enabled = true;
@@ -853,7 +995,12 @@ export class DragController {
         const op: OpDescriptor = {
           kind: active.plan.kind,
           weld: this.drag.weld,
-          sel: classifySelection(this.current, this.drag.sel, this.drag.kind),
+          // Edge operations (chamfer / subdivide) are always global; vertex/face
+          // operations classify their selection by arity / figure.
+          sel:
+            this.drag.kind === "edge"
+              ? { kind: "whole" }
+              : classifySelection(this.current, this.drag.sel, this.drag.kind),
           chirality: active.plan.chirality?.(),
         };
         const label = operationLabel(op);
@@ -1031,6 +1178,17 @@ export class DragController {
 
     const hovering = !!this.hover && config.features.hoverHighlight;
 
+    // Edge handles drive chamfer / subdivide (no arity / multi-select). Hovering one
+    // shows the handle and highlights its whole edge; modifiers don't apply.
+    if (hovering && this.hover!.kind === "edge") {
+      const state = this.hoverInRange ? "hover" : "proximity";
+      this.view.showMarker("edge", this.hover!.id, state);
+      if (this.hoverInRange && this.hoverRay) {
+        this.showHoverPreview(this.hover!, this.hoverRay, false);
+      }
+      return;
+    }
+
     // Option gesture: hovering a handle in range previews its WHOLE arity group
     // (every matching handle lights up, and a click/drag ADDS them to the selection).
     const arity = hovering ? this.gestureArity(this.hover!) : null;
@@ -1104,6 +1262,21 @@ export class DragController {
   private showHoverPreview(marker: Marker, ray: Ray, affected: boolean): void {
     // Guard against a marker left over from a previous mesh (the id may no longer
     // exist after a commit / undo swapped the geometry).
+    if (marker.kind === "edge") {
+      // Highlight the whole hovered edge (the handle drives chamfer / subdivide).
+      const ops = config.features.operations;
+      if (marker.edge && (ops.chamfer || ops.subdivide)) {
+        const [a, b] = marker.edge;
+        if (a < this.current.vertices.length && b < this.current.vertices.length) {
+          this.view.setEdgeHighlight(
+            this.current.vertices[a],
+            this.current.vertices[b],
+            affected ? config.render.selectedColor : config.render.dragLineColor,
+          );
+        }
+      }
+      return;
+    }
     if (marker.id >= (marker.kind === "vertex" ? this.current.vertices : this.current.faces).length)
       return;
     if (marker.kind === "vertex" && config.features.operations.truncate) {

@@ -38,7 +38,7 @@ export interface PreviewOpts {
   hiddenEdges?: Set<string>;
 }
 
-export type MarkerKind = "vertex" | "face";
+export type MarkerKind = "vertex" | "face" | "edge";
 export type MarkerState = "normal" | "proximity" | "hover" | "selected" | "drag";
 
 export interface Marker {
@@ -47,6 +47,8 @@ export interface Marker {
   position: Vector3;
   normals: Vector3[];
   mesh: ThreeMesh;
+  /** For an "edge" marker: its two endpoint vertex indices (the dragged edge). */
+  edge?: [number, number];
 }
 
 /** Unique undirected edges (as index pairs) of a mesh, for the wireframe. */
@@ -139,7 +141,9 @@ function appearanceForState(
   const base =
     kind === "vertex"
       ? config.render.vertexMarkerColor
-      : config.render.faceMarkerColor;
+      : kind === "edge"
+        ? config.render.edgeMarkerColor
+        : config.render.faceMarkerColor;
   switch (state) {
     case "proximity":
       return { color: base, opacity: config.render.markerProximityOpacity };
@@ -172,6 +176,7 @@ export class SceneView {
 
   vertexMarkers: Marker[] = [];
   faceMarkers: Marker[] = [];
+  edgeMarkers: Marker[] = [];
 
   private faceMat: MeshStandardMaterial;
   private faceHighlightMat: MeshBasicMaterial;
@@ -193,6 +198,7 @@ export class SceneView {
   private colorFade: { from: Color[]; to: Color[]; start: number; durMs: number } | null = null;
   private vertexGeo = new SphereGeometry(config.render.vertexMarkerRadius, 14, 10);
   private faceGeo = new SphereGeometry(config.render.faceMarkerRadius, 14, 10);
+  private edgeGeo = new SphereGeometry(config.render.edgeMarkerRadius, 14, 10);
 
   constructor(public readonly scene: Scene) {
     this.faceMat = new MeshStandardMaterial({
@@ -449,6 +455,7 @@ export class SceneView {
     for (const m of this.markerGroup.children.slice()) this.markerGroup.remove(m);
     this.vertexMarkers = [];
     this.faceMarkers = [];
+    this.edgeMarkers = [];
 
     const makeMarker = (kind: MarkerKind, geo: SphereGeometry, pos: Vector3) => {
       const app = appearanceForState(kind, "normal");
@@ -498,6 +505,31 @@ export class SceneView {
           normals: [faceNormals[id]] });
       });
     }
+    if (config.render.showEdgeMarkers) {
+      // One handle per undirected edge, at its midpoint. The two faces sharing the
+      // edge give its facing test (for culling) and its drag-axis normals.
+      const facesByEdge = new Map<string, number[]>();
+      poly.faces.forEach((f, fi) => {
+        for (let i = 0; i < f.length; i++) {
+          const a = f[i];
+          const b = f[(i + 1) % f.length];
+          const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+          (facesByEdge.get(key) ?? facesByEdge.set(key, []).get(key)!).push(fi);
+        }
+      });
+      let eid = 0;
+      for (const [key, fis] of facesByEdge) {
+        const [a, b] = key.split("_").map(Number);
+        const mid = poly.vertices[a].clone().add(poly.vertices[b]).multiplyScalar(0.5);
+        const mesh = makeMarker("edge", this.edgeGeo, mid);
+        this.edgeMarkers.push({
+          kind: "edge", id: eid++,
+          position: mid, mesh,
+          normals: fis.map((fi) => faceNormals[fi]),
+          edge: [a, b],
+        });
+      }
+    }
   }
 
   /** Show a transient morph preview (hide markers + face overlay). `faceColors`
@@ -516,7 +548,7 @@ export class SceneView {
 
   /** Rescale markers + the drag tube so their apparent on-screen size is stable. */
   updateMarkerScales(camera: Camera, refDistance: number): void {
-    for (const m of [...this.vertexMarkers, ...this.faceMarkers]) {
+    for (const m of [...this.vertexMarkers, ...this.faceMarkers, ...this.edgeMarkers]) {
       const d = camera.position.distanceTo(m.mesh.position);
       m.mesh.scale.setScalar(Math.max(d / refDistance, 0.05));
     }
@@ -544,11 +576,21 @@ export class SceneView {
   resetMarkerStates(): void {
     for (const m of this.vertexMarkers) m.mesh.visible = false;
     for (const m of this.faceMarkers) m.mesh.visible = false;
+    for (const m of this.edgeMarkers) m.mesh.visible = false;
+  }
+
+  /** The marker list for a kind. */
+  private markersFor(kind: MarkerKind): Marker[] {
+    return kind === "vertex"
+      ? this.vertexMarkers
+      : kind === "edge"
+        ? this.edgeMarkers
+        : this.faceMarkers;
   }
 
   /** Make one marker visible with the given state's color + opacity. */
   showMarker(kind: MarkerKind, id: number, state: MarkerState): void {
-    const arr = kind === "vertex" ? this.vertexMarkers : this.faceMarkers;
+    const arr = this.markersFor(kind);
     const m = arr.find((x) => x.id === id);
     if (!m) return;
     m.mesh.visible = true;

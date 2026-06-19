@@ -26,6 +26,8 @@ export const config = {
       join: true, // the welded "max" end of the kis drag (drag fully out)
       snub: true, // Shift + drag a degree-2n vertex
       gyro: true, // Shift + drag a 2n-gon face
+      chamfer: true, // drag an edge midpoint sideways along a bordering face
+      subdivide: true, // drag an edge midpoint outward along the edge normal
     },
 
     multiSelect: true, // Cmd (macOS) / Ctrl: select several elements before dragging
@@ -72,6 +74,13 @@ export const config = {
     // (un-projected) cursor distance drive the parameter instead.
     snapTruncateToEdge: true,
     snapKisToNormal: true,
+
+    // EDGE handles (chamfer / subdivide). An edge midpoint can be dragged along
+    // three lines: perpendicular to the edge within each bordering face (→ chamfer)
+    // or along the edge normal, the mean of the two face normals (→ subdivide). On
+    // drag start the axis whose infinite line passes nearest the cursor ray is
+    // chosen and the drag is constrained to it.
+    snapEdgeToAxis: true,
 
     // How far (in pixels) the pointer must move after pressing on a handle before
     // the press becomes a drag rather than a click.
@@ -358,6 +367,8 @@ export const config = {
       kis: ["Kis-ing", "Joining"],
       snub: ["Incompletely Snubbing", "Snubbing"],
       gyro: ["Incompletely Gyro-ing", "Gyro-ing"],
+      chamfer: ["Chamfering", "Joining"],
+      subdivide: ["Subdividing", "Rectifying"],
     } as Record<string, [unwelded: string, welded: string]>,
 
     // The OPTIONS panel. Line 1 shows the discovered-shape count; line 2 labels the
@@ -423,6 +434,8 @@ export const config = {
       kis:      { unwelded: ["Kis", "Kis"], welded: ["Join", "Joined"] },
       snub:     { unwelded: ["Incompletely Snub", "Incomplete Snub"], welded: ["Snub", "Snub"] },
       gyro:     { unwelded: ["Incompletely Gyro", "Incomplete Gyro"], welded: ["Gyro", "Gyro"] },
+      chamfer:  { unwelded: ["Chamfer", "Chamfered"], welded: ["Join", "Joined"] },
+      subdivide: { unwelded: ["Subdivide", "Subdivided"], welded: ["Unsubdivide", "Unsubdivided"] },
     },
   },
 
@@ -789,8 +802,11 @@ export const config = {
     vertexMarkerRadius: 0.04,
     faceMarkerColor: 0xe0e0e0,
     faceMarkerRadius: 0.05,
+    edgeMarkerColor: 0xe0e0e0,
+    edgeMarkerRadius: 0.04,
     showVertexMarkers: true,
     showFaceMarkers: true,
+    showEdgeMarkers: true,
     // Opacity of a marker when it is only a "nearby" hint (proximity, not in range).
     markerProximityOpacity: 0.32,
 
