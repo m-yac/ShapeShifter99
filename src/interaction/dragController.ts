@@ -92,6 +92,26 @@ interface Drag {
   restore: SelectionSnapshot | null; // selection to put back if this multi-drag commits nothing
   t: number; // active plan's current parameter (base level when Shift up; skew when down)
   weld: boolean;
+  // Edge drags (chamfer / subdivide) only: the dragged edge, its three axes, and
+  // which one is currently active — so moving the cursor can SWITCH axes mid-drag
+  // (rebuilding `base`), the way a vertex drag switches which incident edge it
+  // tracks. Null for vertex/face drags.
+  edgeAxis: EdgeAxisState | null;
+}
+
+/** The three drag axes of an edge handle, as lines through its midpoint. */
+interface EdgeAxisInfo {
+  midpoint: Vector3;
+  faceA: number;
+  faceB: number;
+  axes: Array<{ which: "A" | "B" | "normal"; dir: Vector3 }>;
+}
+
+/** The live axis state of an edge (chamfer / subdivide) drag. */
+interface EdgeAxisState {
+  edge: [number, number];
+  info: EdgeAxisInfo;
+  which: "A" | "B" | "normal";
 }
 
 /**
@@ -646,6 +666,9 @@ export class DragController {
   private updateDragPreview(ray: Ray): void {
     const d = this.drag!;
     d.lastRay = ray;
+    // An edge drag re-picks its nearest axis each frame, so the cursor can switch
+    // between chamfer (face A / B) and subdivide (normal) mid-drag.
+    if (d.kind === "edge") this.updateEdgeAxis(ray);
     const usingShift = d.shiftHeld && d.shift !== null;
     const active = this.activeSlot(d);
     const snap = active.plan.snap(ray);
@@ -784,6 +807,7 @@ export class DragController {
       selCount: sel ? sel.size : null,
       restore,
       t: 0, weld: false,
+      edgeAxis: null,
     };
     this.mode = "dragging";
     // Shift already held at grab time → enter snub/gyro immediately, frozen at t=0.
@@ -861,12 +885,7 @@ export class DragController {
    * perpendicular to the edge within each bordering face (→ chamfer), and along the
    * edge normal — the mean of the two face normals (→ subdivide).
    */
-  private edgeAxes(a: number, b: number): {
-    midpoint: Vector3;
-    faceA: number;
-    faceB: number;
-    axes: Array<{ which: "A" | "B" | "normal"; dir: Vector3 }>;
-  } | null {
+  private edgeAxes(a: number, b: number): EdgeAxisInfo | null {
     const he = this.halfEdgeFor(a, b);
     if (!he || !he.twin) return null;
     const fA = he.face;
@@ -900,43 +919,18 @@ export class DragController {
   /** Begin a chamfer / subdivide drag from an edge handle: pick the nearest axis to
    *  the cursor ray, then build the corresponding operation. */
   private startEdgeDrag(marker: Marker, ray: Ray): void {
-    const ops = config.features.operations;
     const info = marker.edge && this.edgeAxes(marker.edge[0], marker.edge[1]);
     if (!marker.edge || !info) {
       this.mode = "idle";
       this.pending = null;
       return;
     }
-    // Pick the axis whose infinite line passes nearest the cursor ray.
-    let best: { which: "A" | "B" | "normal"; dist: number } | null = null;
-    for (const ax of info.axes) {
-      if (ax.dir.lengthSq() < 1e-12) continue;
-      const s = closestLineParam(info.midpoint, ax.dir, ray.origin, ray.direction);
-      const point = info.midpoint.clone().add(ax.dir.clone().multiplyScalar(s));
-      const dist = distancePointToRay(point, ray);
-      if (!best || dist < best.dist) best = { which: ax.which, dist };
-    }
-    if (!best) {
-      this.mode = "idle";
-      this.pending = null;
-      return;
-    }
-
-    let slot: PlanSlot | null = null;
-    try {
-      if (best.which === "normal") {
-        if (ops.subdivide) {
-          slot = { plan: buildSubdivide(this.current, marker.edge, this.inView), allowMax: true };
-        }
-      } else if (ops.chamfer) {
-        const track = best.which === "A" ? info.faceA : info.faceB;
-        slot = { plan: buildChamfer(this.current, marker.edge, track, this.inView), allowMax: true };
-      }
-    } catch (err) {
-      console.warn("Edge operation unavailable:", err);
-      slot = null;
-    }
-    if (!slot) {
+    // Pick the axis whose infinite line passes nearest the cursor ray, then build
+    // the matching operation. (Both are re-evaluated every frame during the drag so
+    // moving the cursor can switch axes — see updateEdgeAxis.)
+    const which = this.pickEdgeAxis(info, ray);
+    const slot = which && this.buildEdgeSlot(marker.edge, which, info);
+    if (!which || !slot) {
       this.mode = "idle";
       this.pending = null;
       return;
@@ -958,6 +952,7 @@ export class DragController {
       restore: null,
       t: 0,
       weld: false,
+      edgeAxis: { edge: marker.edge, info, which },
     };
     this.mode = "dragging";
     const verts = slot.plan.positions(0);
@@ -968,6 +963,58 @@ export class DragController {
     this.readout.setDrag({
       kind: slot.plan.kind, weld: false, t: 0, selIds: null, selKind: "edge",
     });
+  }
+
+  /** The edge axis whose infinite line passes nearest the cursor ray, or null when
+   *  none is usable. Re-run each frame so a drag can switch axes like a vertex drag
+   *  switches incident edges. */
+  private pickEdgeAxis(info: EdgeAxisInfo, ray: Ray): "A" | "B" | "normal" | null {
+    let best: { which: "A" | "B" | "normal"; dist: number } | null = null;
+    for (const ax of info.axes) {
+      if (ax.dir.lengthSq() < 1e-12) continue;
+      const s = closestLineParam(info.midpoint, ax.dir, ray.origin, ray.direction);
+      const point = info.midpoint.clone().add(ax.dir.clone().multiplyScalar(s));
+      const dist = distancePointToRay(point, ray);
+      if (!best || dist < best.dist) best = { which: ax.which, dist };
+    }
+    return best?.which ?? null;
+  }
+
+  /** Build the chamfer / subdivide plan for an edge axis, or null when that op is
+   *  disabled or unavailable for this edge. */
+  private buildEdgeSlot(
+    edge: [number, number],
+    which: "A" | "B" | "normal",
+    info: EdgeAxisInfo,
+  ): PlanSlot | null {
+    const ops = config.features.operations;
+    try {
+      if (which === "normal") {
+        if (!ops.subdivide) return null;
+        return { plan: buildSubdivide(this.current, edge, this.inView), allowMax: true };
+      }
+      if (!ops.chamfer) return null;
+      const track = which === "A" ? info.faceA : info.faceB;
+      return { plan: buildChamfer(this.current, edge, track, this.inView), allowMax: true };
+    } catch (err) {
+      console.warn("Edge operation unavailable:", err);
+      return null;
+    }
+  }
+
+  /** During an edge drag, switch to whichever axis is now nearest the cursor (the
+   *  chamfer-A / chamfer-B / subdivide choice), rebuilding the operation. Keeps the
+   *  current axis if the nearest one's op is disabled. */
+  private updateEdgeAxis(ray: Ray): void {
+    const d = this.drag!;
+    const e = d.edgeAxis;
+    if (!e) return;
+    const which = this.pickEdgeAxis(e.info, ray);
+    if (!which || which === e.which) return;
+    const slot = this.buildEdgeSlot(e.edge, which, e.info);
+    if (!slot) return;
+    e.which = which;
+    d.base = slot;
   }
 
   private onUp(e: PointerEvent, pointerStillDown: boolean = false): void {

@@ -74,17 +74,47 @@ export function buildSubdivide(
   const apexOf = (vid: number) => E + vid;
   const vertexCount = E + dcel.vertices.length;
 
-  // The raised midpoint reaches roughly the level of the surrounding vertices at
-  // the weld; a fraction of the average incident edge length is a good, non-
-  // degenerate cap height (the post-release solver refines the exact form).
+  // The limit (hMax) is the lift at which every vertex's corner fan becomes
+  // coplanar: there its triangles merge into the vertex-figure polygon and the
+  // apex welds away, so the solid becomes its RECTIFICATION. For a vertex v with
+  // axis a (its mean face normal), an incident edge midpoint m raised by s along
+  // its normal n lies level with the apex when (v − m)·a = s (n·a), so the lift
+  // that flattens the fan is s = (v − m)·a / (n·a). This differs per vertex on an
+  // irregular solid; the mean is exact for the vertex/edge-transitive Platonic
+  // solids and a good heuristic otherwise (the post-release solver refines it).
+  const midByKey = new Map<string, { mid: Vector3; normal: Vector3 }>();
+  for (const m of midData) midByKey.set(m.key, m);
+  let hSum = 0;
+  let hCount = 0;
+  for (const v of dcel.vertices) {
+    const ring = outgoingHalfEdges(v);
+    const axis = new Vector3();
+    for (const h of ring) axis.add(outwardNormal(h.face));
+    if (axis.lengthSq() < 1e-18) continue;
+    axis.normalize();
+    let s = 0;
+    let n = 0;
+    for (const h of ring) {
+      const md = midByKey.get(edgeKey(h.origin.id, h.next.origin.id));
+      if (!md) continue;
+      const denom = md.normal.dot(axis);
+      if (Math.abs(denom) < 1e-6) continue;
+      s += v.position.clone().sub(md.mid).dot(axis) / denom;
+      n++;
+    }
+    if (n > 0) {
+      hSum += s / n;
+      hCount++;
+    }
+  }
+  // Fall back to a fraction of the average edge length if the heuristic degenerates.
   let avgLen = 0;
   for (const m of midData) {
-    // re-derive endpoints from the key for the length estimate
     const [a, b] = m.key.split("_").map(Number);
     avgLen += dcel.vertices[a].position.distanceTo(dcel.vertices[b].position);
   }
   avgLen /= Math.max(1, midData.length);
-  const hMax = 0.5 * avgLen;
+  const hMax = hCount > 0 && hSum > 0 ? hSum / hCount : 0.5 * avgLen;
 
   function positions(t: number): Vector3[] {
     const out: Vector3[] = new Array(vertexCount);
@@ -176,18 +206,41 @@ export function buildSubdivide(
 
   function commit(t: number, weld: boolean): { mesh: Mesh; colors: ColorSet } {
     if (weld) {
-      // At the coplanar height every original face's pieces weld back into it, so
-      // the welded form is the original solid.
+      // At the limit every vertex's corner fan is coplanar: its triangles merge
+      // into the vertex-figure polygon and the apex welds away, leaving only the
+      // edge-midpoint vertices — i.e. the RECTIFICATION of the solid.
+      const verts: Vector3[] = new Array(E);
+      for (const m of midData) verts[m.index] = m.mid.clone().addScaledVector(m.normal, hMax);
+      const faces: number[][] = [];
+      const rFaceColor: number[] = [];
+      // (a) the central polygon of each original face (through its edge midpoints).
+      for (const f of dcel.faces) {
+        const loop: number[] = [];
+        let h = f.halfedge;
+        const start = h;
+        do {
+          loop.push(midOf(h.origin.id, h.next.origin.id));
+          h = h.next;
+        } while (h !== start);
+        faces.push(loop);
+        rFaceColor.push(old.face[f.id]);
+      }
+      // (b) the vertex figure of each original vertex (its surrounding midpoints).
+      // The corner-fan triangles that merge into it carry the fresh `base` color at
+      // the limit, so the merged vertex-figure face takes the same color.
+      for (const v of dcel.vertices) {
+        faces.push(outgoingHalfEdges(v).map((h) => midOf(v.id, h.next.origin.id)));
+        rFaceColor.push(base);
+      }
+      const rEdgeColor = new Map<string, number>();
+      for (const loop of faces) {
+        for (let i = 0; i < loop.length; i++) {
+          rEdgeColor.set(edgeKey(loop[i], loop[(i + 1) % loop.length]), base + 1);
+        }
+      }
       return {
-        mesh: {
-          vertices: poly.mesh.vertices.map((v) => v.clone()),
-          faces: poly.mesh.faces.map((f) => f.slice()),
-        },
-        colors: {
-          vertex: old.vertex.slice(),
-          face: old.face.slice(),
-          edge: new Map(old.edge),
-        },
+        mesh: { vertices: verts, faces },
+        colors: { vertex: new Array(E).fill(base), face: rFaceColor, edge: rEdgeColor },
       };
     }
     return {

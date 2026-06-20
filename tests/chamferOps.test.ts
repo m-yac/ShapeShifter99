@@ -70,11 +70,12 @@ describe("subdivide", () => {
     expect(signaturesEqual(sig, namedSig("Subdivided octahedron"))).toBe(true);
   });
 
-  it("welded subdivision returns the original solid", () => {
+  it("welded subdivision rectifies (cube → cuboctahedron)", () => {
     const { edge } = anyEdge(cube());
     const sig = computeSignature(
       buildDCEL(buildSubdivide(cube(), edge).commit(1, true).mesh),
     );
-    expect(sig).toMatchObject({ V: 8, E: 12, F: 6 });
+    expect(sig).toMatchObject({ V: 12, E: 24, F: 14 });
+    expect(signaturesEqual(sig, namedSig("Cuboctahedron"))).toBe(true);
   });
 });

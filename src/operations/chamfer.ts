@@ -24,6 +24,24 @@ function faceLoopIds(f: HEFace): number[] {
   return faceVertices(f).map((v) => v.id);
 }
 
+/** Invert a symmetric 3x3 matrix given as 9 row-major numbers, or null if it is
+ *  (near-)singular. Used to least-squares-fit a chamfer vertex onto the planes of
+ *  its incident hexagons. */
+function invert3(m: number[]): number[] | null {
+  const [a, b, c, d, e, f, g, h, i] = m;
+  const A = e * i - f * h;
+  const B = -(d * i - f * g);
+  const C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  if (Math.abs(det) < 1e-9) return null;
+  const inv = 1 / det;
+  return [
+    A * inv, (c * h - b * i) * inv, (b * f - c * e) * inv,
+    B * inv, (a * i - c * g) * inv, (c * d - a * f) * inv,
+    C * inv, (b * g - a * h) * inv, (a * e - b * d) * inv,
+  ];
+}
+
 /**
  * Chamfer ↔ Join, driven by dragging an edge midpoint sideways along a bordering
  * face. Like truncate/kis the gesture is global: dragging ONE edge chamfers EVERY
@@ -68,9 +86,69 @@ export function buildChamfer(
   }
   const vertexCount = idx;
 
+  // ---- Move the original vertices so the new hexagons stay planar. -------------
+  // Each undirected edge's hexagon is `[p, A_p, A_q, q, B_q, B_p]`. Its four inset
+  // corners always form a parallelogram (so they're coplanar) whose plane has
+  // normal N = (q−p)×(c_B−c_A) through the parallelogram center C(t) = lerp(m, k, t)
+  // (m = edge midpoint, k = mean of the two face centroids). The hexagon is planar
+  // exactly when p and q also lie in that plane. Each original vertex sits on one
+  // such plane per incident edge; we least-squares fit it to all of them (exact for
+  // symmetric solids, and continuous from the identity since every vertex already
+  // lies on all its planes at t = 0). The shrunk faces stay planar regardless, so
+  // moving the originals doesn't disturb them.
+  interface PlaneRef { N: Vector3; m: Vector3; k: Vector3; }
+  const vPlanes: PlaneRef[][] = Array.from({ length: V }, () => []);
+  for (const he of dcel.halfedges) {
+    if (!he.twin || he.id >= he.twin.id) continue; // once per undirected edge
+    const p = he.origin.position;
+    const q = he.next.origin.position;
+    const cA = faceCentroidHE(he.face);
+    const cB = faceCentroidHE(he.twin.face);
+    const N = q.clone().sub(p).cross(cB.clone().sub(cA));
+    if (N.lengthSq() < 1e-18) continue;
+    N.normalize();
+    const m = p.clone().add(q).multiplyScalar(0.5);
+    const k = cA.clone().add(cB).multiplyScalar(0.5);
+    const ref: PlaneRef = { N, m, k };
+    vPlanes[he.origin.id].push(ref);
+    vPlanes[he.next.origin.id].push(ref);
+  }
+  // Per vertex: the inverse normal-matrix (Σ N Nᵀ), or null when under-determined
+  // (then the vertex doesn't move). Constant across t, so precompute once.
+  const vInv: (number[] | null)[] = new Array(V);
+  for (let v = 0; v < V; v++) {
+    const M = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (const { N } of vPlanes[v]) {
+      M[0] += N.x * N.x; M[1] += N.x * N.y; M[2] += N.x * N.z;
+      M[3] += N.y * N.x; M[4] += N.y * N.y; M[5] += N.y * N.z;
+      M[6] += N.z * N.x; M[7] += N.z * N.y; M[8] += N.z * N.z;
+    }
+    vInv[v] = invert3(M);
+  }
+
+  /** The planarizing position of original vertex `v` at parameter `t`. */
+  function movedVertex(v: number, t: number): Vector3 {
+    const inv = vInv[v];
+    if (!inv) return dcel.vertices[v].position.clone();
+    let bx = 0, by = 0, bz = 0;
+    for (const { N, m, k } of vPlanes[v]) {
+      // plane point C(t) = lerp(m, k, t); residual basis Σ N (N·C)
+      const cx = m.x + (k.x - m.x) * t;
+      const cy = m.y + (k.y - m.y) * t;
+      const cz = m.z + (k.z - m.z) * t;
+      const d = N.x * cx + N.y * cy + N.z * cz;
+      bx += N.x * d; by += N.y * d; bz += N.z * d;
+    }
+    return new Vector3(
+      inv[0] * bx + inv[1] * by + inv[2] * bz,
+      inv[3] * bx + inv[4] * by + inv[5] * bz,
+      inv[6] * bx + inv[7] * by + inv[8] * bz,
+    );
+  }
+
   function positions(t: number): Vector3[] {
     const out: Vector3[] = new Array(vertexCount);
-    for (let i = 0; i < V; i++) out[i] = dcel.vertices[i].position.clone();
+    for (let i = 0; i < V; i++) out[i] = movedVertex(i, t);
     for (const n of insets) out[n.index] = n.v.clone().lerp(n.c, t);
     return out;
   }
@@ -98,8 +176,12 @@ export function buildChamfer(
       p, cornerOf(A.id, p), cornerOf(A.id, q),
       q, cornerOf(B.id, q), cornerOf(B.id, p),
     ]);
-    faceColor.push(base); // fresh color for the new hexagons
-    faceStart.push(old.edge.get(edgeKey(p, q)) ?? base); // emerge from the edge color
+    // The new hexagon replaces the original edge, so it keeps that edge's color
+    // (constant through the drag) — the same color its welded rhombus carries at
+    // the Join limit, where weldVertexPairs preserves each face's color.
+    const ec = old.edge.get(edgeKey(p, q)) ?? base;
+    faceColor.push(ec);
+    faceStart.push(ec);
   }
 
   // ---- Colors for vertices + edges -------------------------------------------
