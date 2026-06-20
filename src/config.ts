@@ -470,13 +470,15 @@ export const config = {
     revealAllCode: "xyzzy",
     diagram: [
       // Tetrahedron family
+      [ -1,  0,  1, "Chamfered Tetrahedron", []  ],
       [  0,  6,  0, "Icosahedron", ["d3l4", "d3r4", "l4d5f4", "r4d5b4"] ],
       [  0,  4,  0, "Octahedron", ["d2l2", "d2r2", "u2:^", "l2d3f2", "r2d3b2"] ],
       [  0,  2,  0, "Truncated Tetrahedron", ["u2^"] ],
-      [  0,  0,  0, "Tetrahedron", ["u2", "d2"] ],
+      [  0,  0,  0, "Tetrahedron", ["u2", "d2", "fl", "br"] ],
       [  0, -2,  0, "Triakis Tetrahedron", ["d2^"] ],
       [  0, -4,  0, "Cube", ["u2l2", "u2r2", "d2:^", "l2u3f2", "r2u3b2"] ],
       [  0, -6,  0, "Dodecahedron", ["u3l4", "u3r4", "l4u5f4", "r4u5b4"] ],
+      [  1,  0, -1, "Subdivided Tetrahedron", []  ],
       // Octahedron / Cube family
       [ -2,  2,  0, "Triakis Octahedron", ["d2l2^"] ],
       [  2,  2,  0, "Truncated Octahedron", ["d2r2^"] ],

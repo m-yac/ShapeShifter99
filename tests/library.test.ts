@@ -57,13 +57,16 @@ describe("diagram graph", () => {
 describe("computeVisible (directed neighbours)", () => {
   it("reveals the Tetrahedron's children + one solid-arrowhead hop", () => {
     // The spec example: with only the Tetrahedron made, you see it, its
-    // truncation + kis, and (one solid-arrowhead hop further) the octahedron + cube.
+    // truncation + kis + chamfer + subdivision, and (one solid-arrowhead hop
+    // further) the octahedron + cube.
     const v = visibleNames(["Tetrahedron"]);
     expect(v).toEqual(
       new Set([
         "Tetrahedron",
         "Truncated Tetrahedron",
         "Triakis Tetrahedron",
+        "Chamfered Tetrahedron",
+        "Subdivided Tetrahedron",
         "Octahedron",
         "Cube",
       ]),

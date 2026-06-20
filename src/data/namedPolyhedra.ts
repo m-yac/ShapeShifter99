@@ -6,6 +6,8 @@ import { buildTruncate } from "../operations/truncate";
 import { buildSnub } from "../operations/snub";
 import { buildKis } from "../operations/kis";
 import { buildGyro } from "../operations/gyro";
+import { buildChamfer } from "../operations/chamfer";
+import { buildSubdivide } from "../operations/subdivide";
 
 /**
  * The named-polyhedron database — the SINGLE source of truth for both
@@ -76,29 +78,27 @@ const snub = (p: Polyhedron): Polyhedron =>
 const gyro = (p: Polyhedron): Polyhedron =>
   wrap(buildGyro(p, 0, null).commit(1, true));
 
-// --- arity-selected operations (for the chamfer / subdivide recipes) --------
-/** Per-vertex degree (incident-face count) of a solid. */
-const vertexDegrees = (poly: Polyhedron): number[] => {
-  const deg = new Array<number>(poly.vertices.length).fill(0);
-  for (const f of poly.faces) for (const i of f) deg[i]++;
-  return deg;
+// --- chamfer / subdivide ----------------------------------------------------
+// These are built with the actual interactive operations (the same `buildChamfer`
+// / `buildSubdivide` the game runs on a dragged edge), rather than reconstructed
+// from truncate/kis on a selected arity. That arity trick can't express the
+// tetrahedron — its join (the cube) is vertex-uniform and its rectify (the
+// octahedron) is face-uniform, so there's no sub-arity to target — whereas the
+// real operation chamfers/subdivides EVERY edge and so handles it directly. Any
+// edge works as the drag handle (the op is global); we just take the first.
+
+/** Chamfer (intermediate topology) every edge of `p`. */
+const chamfer = (p: Polyhedron): Polyhedron => {
+  const he = p.dcel.halfedges[0];
+  const edge: [number, number] = [he.origin.id, he.next.origin.id];
+  return wrap(buildChamfer(p, edge, he.face.id).commit(0.5, false));
 };
 
-/** Truncate (intermediate topology) only the degree-`n` vertices of `p`. */
-const truncateVerticesOfDegree = (p: Polyhedron, n: number): Polyhedron => {
-  const deg = vertexDegrees(p);
-  const sel = new Set<number>();
-  for (let i = 0; i < deg.length; i++) if (deg[i] === n) sel.add(i);
-  return wrap(buildTruncate(p, sel.values().next().value as number, sel).commit(0.5, false));
-};
-
-/** Kis (intermediate topology) only the `n`-gon faces of `p`. */
-const kisFacesOfSides = (p: Polyhedron, n: number): Polyhedron => {
-  const sel = new Set<number>();
-  p.faces.forEach((f, i) => {
-    if (f.length === n) sel.add(i);
-  });
-  return wrap(buildKis(p, sel.values().next().value as number, sel).commit(0.5, false));
+/** Subdivide (intermediate topology) every edge of `p`. */
+const subdivide = (p: Polyhedron): Polyhedron => {
+  const he = p.dcel.halfedges[0];
+  const edge: [number, number] = [he.origin.id, he.next.origin.id];
+  return wrap(buildSubdivide(p, edge).commit(0.5, false));
 };
 
 /** Finalize a colored solid into a named-database entry. */
@@ -174,21 +174,19 @@ export const NAMED: NamedPolyhedron[] = [
   E("Pentagonal icositetrahedron", C, OC, gyro(rhDod)),
   E("Pentagonal hexecontahedron", C, IC, gyro(rhTri)),
 
-  // Chamfered solids (join, then truncate the join's vertices of the original
-  // face's arity). The tetrahedron's join (the cube) is vertex-uniform, so its
-  // chamfer coincides with the truncated cube and isn't a separate shape.
-  E("Chamfered cube", Ch, OC, truncateVerticesOfDegree(join(cube), 4)),
-  E("Chamfered octahedron", Ch, OC, truncateVerticesOfDegree(rhDod, 3)),
-  E("Chamfered dodecahedron", Ch, IC, truncateVerticesOfDegree(join(dod), 5)),
-  E("Chamfered icosahedron", Ch, IC, truncateVerticesOfDegree(rhTri, 3)),
+  // Chamfered solids — every edge chamfered (the live operation).
+  E("Chamfered tetrahedron", Ch, TE, chamfer(tet)),
+  E("Chamfered cube", Ch, OC, chamfer(cube)),
+  E("Chamfered octahedron", Ch, OC, chamfer(oct)),
+  E("Chamfered dodecahedron", Ch, IC, chamfer(dod)),
+  E("Chamfered icosahedron", Ch, IC, chamfer(ico)),
 
-  // Subdivided solids (rectify, then kis the faces that came from the original
-  // vertices). The tetrahedron's rectify (the octahedron) is face-uniform, so its
-  // subdivision coincides with the triakis octahedron and isn't a separate shape.
-  E("Subdivided cube", Sub, OC, kisFacesOfSides(rectify(cube), 3)),
-  E("Subdivided octahedron", Sub, OC, kisFacesOfSides(cuboct, 4)),
-  E("Subdivided dodecahedron", Sub, IC, kisFacesOfSides(rectify(dod), 3)),
-  E("Subdivided icosahedron", Sub, IC, kisFacesOfSides(icosidod, 5)),
+  // Subdivided solids — every edge subdivided (the live operation).
+  E("Subdivided tetrahedron", Sub, TE, subdivide(tet)),
+  E("Subdivided cube", Sub, OC, subdivide(cube)),
+  E("Subdivided octahedron", Sub, OC, subdivide(oct)),
+  E("Subdivided dodecahedron", Sub, IC, subdivide(dod)),
+  E("Subdivided icosahedron", Sub, IC, subdivide(ico)),
 ];
 
 /** The family ("Platonic solid", …) of a named solid, or null if unknown. */
