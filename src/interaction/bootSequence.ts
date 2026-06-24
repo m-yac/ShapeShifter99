@@ -44,6 +44,8 @@ interface BootLine {
   checkMin?: number; // minimum wait time for an OK
   checkRange?: number; // range of wait times for an OK
   prompt?: string; // "command": text printed before the typed command
+  delayAfterPrompt?: number; // delay after prompt text
+  delayAfterCommand?: number; // delay after command string
   ok?: boolean; // "load": OK vs ERR
   wait?: number; // "load": seconds before the result appears
   // "glitch": drive the corruption overlay (see ui/glitch.ts). `level` sets the
@@ -122,9 +124,9 @@ export class BootSequence {
     // All three screens are plain step lists played the same way; the structural
     // beats (clearing the screen, revealing the 3D view, centering, the shape
     // fade-in, the glitch choreography) are expressed as steps in config.bootText.
-    yield* this.playScript(config.bootText.bios);
-    yield* this.playScript(config.bootText.program);
-    yield* this.playScript(config.bootText.closing);
+    for (const screen of config.bootText) {
+      yield* this.playScript(screen);
+    }
   }
 
   /** Play one screen's list of steps top-to-bottom (see config.bootText). A bare
@@ -152,9 +154,9 @@ export class BootSequence {
           break;
         case "command":
           c.print(step.prompt ?? "");
-          yield 0.5;
+          yield step.delayAfterPrompt ?? 0.5;
           yield* this.type(text);
-          yield 0.3;
+          yield step.delayAfterCommand ?? 0.3;
           c.println(); // the Enter keystroke
           break;
         case "load":

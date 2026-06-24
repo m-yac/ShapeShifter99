@@ -63,6 +63,13 @@ export class History {
     return this.index;
   }
 
+  /** Replace the whole timeline with a previously-saved one (the LIBRARY reopening a
+   *  shape with its construction history). `index` becomes the current entry. */
+  replaceAll(entries: HistoryEntry[], index: number): void {
+    this.entries = entries;
+    this.index = Math.max(0, Math.min(index, entries.length - 1));
+  }
+
   /** Update the remembered view options on the current entry (no new entry / branch). */
   setOptions(options: HistoryOptions): void {
     const e = this.entries[this.index];

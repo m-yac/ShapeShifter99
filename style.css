@@ -141,6 +141,41 @@ canvas {
   z-index: 9; /* above the frame, so the "[X]" masks the border cells */
   background: var(--backlight, #10141c);
 }
+/* The LIBRARY screen's own inset OPTIONS + SHAPE dialogs. Like the main-screen
+   panels but riding ABOVE the full-screen frame overlay. The panel background is
+   click-through (so panning still works behind it); the action buttons opt back
+   into pointer events via `.ctl`. */
+.library-panel {
+  z-index: 9;
+  pointer-events: none;
+}
+/* The reset confirmation is modal: it blocks clicks so a stray release behind it
+   can't pan or open a shape. */
+.confirm-popup {
+  z-index: 10;
+  pointer-events: auto;
+}
+.confirm-text {
+  white-space: pre;
+  text-align: center;
+}
+.confirm-buttons {
+  height: var(--cell-h, 38px);
+  line-height: var(--cell-h, 38px);
+  text-align: center;
+}
+/* The bezel "Help & Info" popup: centered, above EVERYTHING (including the
+   full-screen LIBRARY view), with a solid backlight backing so the 3D behind it
+   doesn't show through. It accepts pointer events so it reads as a real dialog. */
+.help-popup {
+  z-index: 12;
+  pointer-events: auto;
+  background: var(--backlight, #10141c);
+}
+.help-text {
+  color: var(--text-bright, #ffffff);
+  text-shadow: var(--glow-bright, var(--glow));
+}
 /* --------------------------------------------------------------------
    Popups / panels: a box-drawing frame with a scrollable inner area. */
 .popup-frame {

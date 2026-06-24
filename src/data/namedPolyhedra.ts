@@ -39,6 +39,13 @@ export type SolidType =
   | "Johnson solid"
   | "Dihedral solid";
 
+/** One recorded construction step from the tetrahedron: the verb applied and the
+ *  resulting (post-operation) solid. The chain excludes the tetrahedron root. */
+export interface BuildStep {
+  label: string;
+  poly: Polyhedron;
+}
+
 export interface NamedPolyhedron {
   name: string;
   type: SolidType;
@@ -50,6 +57,10 @@ export interface NamedPolyhedron {
    *  for this solid's family), so the browse diagram colors each solid the way the
    *  live app does when you make it. */
   scheme: SchemeName;
+  /** The construction chain from the tetrahedron (excluding the root), so the
+   *  LIBRARY can reopen the solid in the main view with a tetrahedron-rooted
+   *  history even when the user never personally made it. */
+  steps: BuildStep[];
 }
 
 // --- recipe helpers ---------------------------------------------------------
@@ -101,13 +112,40 @@ const subdivide = (p: Polyhedron): Polyhedron => {
   return wrap(buildSubdivide(p, edge).commit(0.5, false));
 };
 
-/** Finalize a colored solid into a named-database entry. */
+// --- step-recording builds --------------------------------------------------
+// A Build is a solid together with the chain of operations that produced it from
+// the tetrahedron. The low-level recipe helpers above stay pure (poly → poly);
+// these wrappers apply one and append the labeled step, so every named solid
+// carries a tetrahedron-rooted history.
+// The tetrahedron — the only starting seed, and the root of every construction.
+const tetMesh = getSeed("tetrahedron");
+const tet = new Polyhedron(tetMesh, seedColors(tetMesh));
+
+interface Build {
+  poly: Polyhedron;
+  steps: BuildStep[];
+}
+const root: Build = { poly: tet, steps: [] };
+const step = (b: Build, fn: (p: Polyhedron) => Polyhedron, label: string): Build => {
+  const poly = fn(b.poly);
+  return { poly, steps: [...b.steps, { label, poly }] };
+};
+const Truncate = (b: Build): Build => step(b, truncate, "Truncate");
+const Rectify = (b: Build): Build => step(b, rectify, "Rectify");
+const Kis = (b: Build): Build => step(b, kis, "Kis");
+const Join = (b: Build): Build => step(b, join, "Join");
+const Snub = (b: Build): Build => step(b, snub, "Snub");
+const Gyro = (b: Build): Build => step(b, gyro, "Gyro");
+const Chamfer = (b: Build): Build => step(b, chamfer, "Chamfer");
+const Subdivide = (b: Build): Build => step(b, subdivide, "Subdivide");
+
+/** Finalize a build into a named-database entry. */
 const E = (
   name: string,
   type: SolidType,
   scheme: SchemeName,
-  poly: Polyhedron,
-): NamedPolyhedron => ({ name, type, poly, scheme });
+  b: Build,
+): NamedPolyhedron => ({ name, type, poly: b.poly, scheme, steps: b.steps });
 
 const P: SolidType = "Platonic solid";
 const A: SolidType = "Archimedean solid";
@@ -120,73 +158,71 @@ const OC: SchemeName = "octahedral";
 const IC: SchemeName = "icosahedral";
 
 // --- the construction tree, rooted at the tetrahedron -----------------------
-// (Identical to what the game produces from the only starting seed.)
-const tetMesh = getSeed("tetrahedron");
-const tet = new Polyhedron(tetMesh, seedColors(tetMesh));
+// (Identical to what the game produces from the only starting seed; the Build
+// wrappers record each step so a tetrahedron-rooted history can be replayed.)
+const octB = Rectify(root); //     rectify(tetra) = octahedron
+const cubeB = Join(root); //       join(tetra)    = cube
+const icoB = Snub(octB); //        snub(octa)     = icosahedron
+const dodB = Gyro(cubeB); //       gyro(cube)     = dodecahedron
 
-const oct = rectify(tet); //  rectify(tetra) = octahedron
-const cube = join(tet); //    join(tetra)    = cube
-const ico = snub(oct); //     snub(octa)     = icosahedron
-const dod = gyro(cube); //    gyro(cube)     = dodecahedron
-
-const cuboct = rectify(oct); //  rectify(octa)  = cuboctahedron
-const rhDod = join(oct); //      join(octa)     = rhombic dodecahedron
-const icosidod = rectify(ico); // rectify(icosa) = icosidodecahedron
-const rhTri = join(ico); //      join(icosa)    = rhombic triacontahedron
+const cuboctB = Rectify(octB); //  rectify(octa)  = cuboctahedron
+const rhDodB = Join(octB); //      join(octa)     = rhombic dodecahedron
+const icosidodB = Rectify(icoB); // rectify(icosa) = icosidodecahedron
+const rhTriB = Join(icoB); //      join(icosa)    = rhombic triacontahedron
 
 export const NAMED: NamedPolyhedron[] = [
   // Platonic solids
-  E("Tetrahedron", P, TE, tet),
-  E("Octahedron", P, OC, oct),
-  E("Cube", P, OC, cube),
-  E("Icosahedron", P, IC, ico),
-  E("Dodecahedron", P, IC, dod),
+  E("Tetrahedron", P, TE, root),
+  E("Octahedron", P, OC, octB),
+  E("Cube", P, OC, cubeB),
+  E("Icosahedron", P, IC, icoB),
+  E("Dodecahedron", P, IC, dodB),
 
   // Archimedean solids — truncations
-  E("Truncated tetrahedron", A, TE, truncate(tet)),
-  E("Truncated octahedron", A, OC, truncate(oct)),
-  E("Truncated cube", A, OC, truncate(cube)),
-  E("Truncated icosahedron", A, IC, truncate(ico)),
-  E("Truncated dodecahedron", A, IC, truncate(dod)),
+  E("Truncated tetrahedron", A, TE, Truncate(root)),
+  E("Truncated octahedron", A, OC, Truncate(octB)),
+  E("Truncated cube", A, OC, Truncate(cubeB)),
+  E("Truncated icosahedron", A, IC, Truncate(icoB)),
+  E("Truncated dodecahedron", A, IC, Truncate(dodB)),
   // Archimedean solids — rectifications & beyond
-  E("Cuboctahedron", A, OC, cuboct),
-  E("Icosidodecahedron", A, IC, icosidod),
-  E("Truncated Cuboctahedron", A, OC, truncate(cuboct)),
-  E("Truncated Icosidodecahedron", A, IC, truncate(icosidod)),
-  E("Rhombicuboctahedron", A, OC, rectify(cuboct)),
-  E("Rhombicosidodecahedron", A, IC, rectify(icosidod)),
-  E("Snub cuboctahedron", A, OC, snub(cuboct)),
-  E("Snub Icosidodecahedron", A, IC, snub(icosidod)),
+  E("Cuboctahedron", A, OC, cuboctB),
+  E("Icosidodecahedron", A, IC, icosidodB),
+  E("Truncated Cuboctahedron", A, OC, Truncate(cuboctB)),
+  E("Truncated Icosidodecahedron", A, IC, Truncate(icosidodB)),
+  E("Rhombicuboctahedron", A, OC, Rectify(cuboctB)),
+  E("Rhombicosidodecahedron", A, IC, Rectify(icosidodB)),
+  E("Snub cuboctahedron", A, OC, Snub(cuboctB)),
+  E("Snub Icosidodecahedron", A, IC, Snub(icosidodB)),
 
   // Catalan solids — kis
-  E("Triakis tetrahedron", C, TE, kis(tet)),
-  E("Triakis octahedron", C, OC, kis(oct)),
-  E("Tetrakis hexahedron", C, OC, kis(cube)),
-  E("Triakis icosahedron", C, IC, kis(ico)),
-  E("Pentakis dodecahedron", C, IC, kis(dod)),
+  E("Triakis tetrahedron", C, TE, Kis(root)),
+  E("Triakis octahedron", C, OC, Kis(octB)),
+  E("Tetrakis hexahedron", C, OC, Kis(cubeB)),
+  E("Triakis icosahedron", C, IC, Kis(icoB)),
+  E("Pentakis dodecahedron", C, IC, Kis(dodB)),
   // Catalan solids — joins & beyond
-  E("Rhombic dodecahedron", C, OC, rhDod),
-  E("Rhombic triacontahedron", C, IC, rhTri),
-  E("Disdyakis dodecahedron", C, OC, kis(rhDod)),
-  E("Disdyakis triacontahedron", C, IC, kis(rhTri)),
-  E("Deltoidal icositetrahedron", C, OC, join(cuboct)),
-  E("Deltoidal hexecontahedron", C, IC, join(icosidod)),
-  E("Pentagonal icositetrahedron", C, OC, gyro(rhDod)),
-  E("Pentagonal hexecontahedron", C, IC, gyro(rhTri)),
+  E("Rhombic dodecahedron", C, OC, rhDodB),
+  E("Rhombic triacontahedron", C, IC, rhTriB),
+  E("Disdyakis dodecahedron", C, OC, Kis(rhDodB)),
+  E("Disdyakis triacontahedron", C, IC, Kis(rhTriB)),
+  E("Deltoidal icositetrahedron", C, OC, Join(cuboctB)),
+  E("Deltoidal hexecontahedron", C, IC, Join(icosidodB)),
+  E("Pentagonal icositetrahedron", C, OC, Gyro(rhDodB)),
+  E("Pentagonal hexecontahedron", C, IC, Gyro(rhTriB)),
 
   // Chamfered solids — every edge chamfered (the live operation).
-  E("Chamfered tetrahedron", Ch, TE, chamfer(tet)),
-  E("Chamfered cube", Ch, OC, chamfer(cube)),
-  E("Chamfered octahedron", Ch, OC, chamfer(oct)),
-  E("Chamfered dodecahedron", Ch, IC, chamfer(dod)),
-  E("Chamfered icosahedron", Ch, IC, chamfer(ico)),
+  E("Chamfered tetrahedron", Ch, TE, Chamfer(root)),
+  E("Chamfered cube", Ch, OC, Chamfer(cubeB)),
+  E("Chamfered octahedron", Ch, OC, Chamfer(octB)),
+  E("Chamfered dodecahedron", Ch, IC, Chamfer(dodB)),
+  E("Chamfered icosahedron", Ch, IC, Chamfer(icoB)),
 
   // Subdivided solids — every edge subdivided (the live operation).
-  E("Subdivided tetrahedron", Sub, TE, subdivide(tet)),
-  E("Subdivided cube", Sub, OC, subdivide(cube)),
-  E("Subdivided octahedron", Sub, OC, subdivide(oct)),
-  E("Subdivided dodecahedron", Sub, IC, subdivide(dod)),
-  E("Subdivided icosahedron", Sub, IC, subdivide(ico)),
+  E("Subdivided tetrahedron", Sub, TE, Subdivide(root)),
+  E("Subdivided cube", Sub, OC, Subdivide(cubeB)),
+  E("Subdivided octahedron", Sub, OC, Subdivide(octB)),
+  E("Subdivided dodecahedron", Sub, IC, Subdivide(dodB)),
+  E("Subdivided icosahedron", Sub, IC, Subdivide(icoB)),
 ];
 
 /** The family ("Platonic solid", …) of a named solid, or null if unknown. */
@@ -204,4 +240,22 @@ for (const e of NAMED) BY_NAME.set(e.name.toLowerCase(), e);
  *  (case-insensitive), or null. */
 export function namedPolyhedronFor(name: string): NamedPolyhedron | null {
   return BY_NAME.get(name.trim().toLowerCase()) ?? null;
+}
+
+/** One entry of a synthesized tetrahedron-rooted history (used when no user-made
+ *  timeline exists for a shape — e.g. opening it via the reveal-all cheat). */
+export interface HistoryStepData {
+  label: string;
+  poly: Polyhedron;
+  isSeed: boolean;
+}
+
+/** The full tetrahedron-rooted construction chain for a named solid (the
+ *  tetrahedron seed followed by each recorded operation's result), or null. */
+export function historyStepsFor(name: string): HistoryStepData[] | null {
+  const e = BY_NAME.get(name.trim().toLowerCase());
+  if (!e) return null;
+  const out: HistoryStepData[] = [{ label: "Tetrahedron", poly: tet, isSeed: true }];
+  for (const s of e.steps) out.push({ label: s.label, poly: s.poly, isSeed: false });
+  return out;
 }

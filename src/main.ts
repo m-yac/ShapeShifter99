@@ -27,6 +27,8 @@ import { GlitchOverlay } from "./ui/glitch";
 import { IntroCutscene } from "./interaction/introCutscene";
 import { LetterIntro } from "./interaction/letterIntro";
 import { BezelControls } from "./ui/bezelControls";
+import { HelpDialog } from "./ui/helpDialog";
+import { hasSavedProgress } from "./history/historyStore";
 import { led } from "./ui/led";
 import { fileBase, saveWysiwygPng, saveLightPng, download } from "./render/exportImage";
 import { polyhedronToStl } from "./render/exportMesh";
@@ -134,8 +136,9 @@ let intro: IntroCutscene | null = null;
 // Save buttons act on the current shape; they no-op until the controller exists
 // (i.e. once the intro hands off). The filename is the shape name, lower-cased
 // with spaces → underscores.
-new BezelControls(screen.bezel, {
-  onHelp: () => {}, // wired but intentionally inert for now
+const helpDialog = new HelpDialog(screen);
+const bezelControls = new BezelControls(screen.bezel, {
+  onHelp: () => helpDialog.toggle(controller?.isLibraryOpen() ? "library" : "main"),
   onSavePng: () => {
     if (!controller) return;
     const base = fileBase(controller.currentName());
@@ -148,6 +151,8 @@ new BezelControls(screen.bezel, {
     download(polyhedronToStl(controller.currentPoly()), `${base}.stl`);
   },
 });
+// Clicks on the Help button toggle the dialog; clicks anywhere else dismiss it.
+helpDialog.setToggleButton(bezelControls.helpButton);
 
 // Flick the activity LED while the user drags (orbiting the shape or a handle):
 // any pointer move with a button down counts as "working".
@@ -204,16 +209,25 @@ if (config.letter.enabled) {
   new LetterIntro(screen, config.letterText, startProgram);
 } else {
   startProgram();
+  // A returning visitor with saved progress skips the boot intro and lands
+  // straight in the app (their made shapes are already restored).
+  if (hasSavedProgress()) jumpToApp();
+}
+
+/** Skip the boot intro and reveal every panel immediately. */
+function jumpToApp() {
+  if (!intro) return;
+  intro.skip(); // synchronously runs the whenFinished above (creates the panels)
+  shapesPanel?.show();
+  controller?.revealHistory();
+  readout.enableSelection();
 }
 
 function skipIntro(e: Event) {
   if (!intro) return;
   e.stopImmediatePropagation();
   e.preventDefault();
-  intro.skip(); // synchronously runs the whenFinished above (creates the panels)
-  shapesPanel?.show();
-  controller?.revealHistory();
-  readout.enableSelection();
+  jumpToApp();
 }
 
 // Any key or click skips the intro and jumps straight to the app, revealing every panel

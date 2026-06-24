@@ -29,6 +29,7 @@ import { Picker } from "./picker";
 import { Selection } from "./selection";
 import { Readout } from "../ui/readout";
 import { History, type HistoryEntry, type HistoryOptions } from "../history/history";
+import { HistoryStore, deserializeHistory } from "../history/historyStore";
 import { HistoryPanel } from "../ui/historyPanel";
 import { type Screen } from "../ui/screen";
 import { type GlitchOverlay } from "../ui/glitch";
@@ -36,7 +37,7 @@ import { ShapesPanel } from "../ui/shapesPanel";
 import { DiscoveryPopup } from "../ui/discoveryPopup";
 import { LibraryBrowser } from "../ui/libraryBrowser";
 import { Discoveries } from "../discoveries";
-import { solidTypeFor } from "../data/namedPolyhedra";
+import { solidTypeFor, namedPolyhedronFor, historyStepsFor } from "../data/namedPolyhedra";
 import { config } from "../config";
 import { led } from "../ui/led";
 
@@ -166,6 +167,9 @@ export class DragController {
 
   // First-time-made-shape tracking + its celebration (glow + glitch + popup).
   private readonly discoveries = new Discoveries();
+  // Per-shape construction histories (persisted), so the LIBRARY can reopen a shape
+  // in the main view with the exact timeline that first produced it.
+  private readonly historyStore = new HistoryStore();
   private readonly discoveryPopup: DiscoveryPopup;
   private readonly library: LibraryBrowser;
 
@@ -190,7 +194,12 @@ export class DragController {
     this.discoveryPopup = new DiscoveryPopup(screen);
     // The full-screen LIBRARY browse diagram, opened by the OPTIONS "Browse"
     // button. It re-reads the discovered set (and copies this camera) each open.
-    this.library = new LibraryBrowser(screen, this.camera, () => this.discoveries.snapshot());
+    this.library = new LibraryBrowser(
+      screen,
+      this.camera,
+      () => this.discoveries.snapshot(),
+      (name) => this.openNamed(name),
+    );
     this.library.mount();
     this.shapes.bindBrowse(() => this.library.show());
     this.shapes.setCount(this.discoveries.count);
@@ -226,6 +235,11 @@ export class DragController {
     return this.current;
   }
 
+  /** Whether the full-screen LIBRARY browse view is open (so Help shows its blurb). */
+  isLibraryOpen(): boolean {
+    return this.library.isOpen();
+  }
+
   /** The display name of the current shape — its identified name, or the derived
    *  history name (e.g. "Augmented Truncated Cube") when unidentified — for filenames. */
   currentName(): string | null {
@@ -250,6 +264,59 @@ export class DragController {
     this.history.reset(poly, seedLabel, this.currentOptions());
     this.view.setPolyhedron(poly, false);
     this.runIdentify(poly);
+  }
+
+  /**
+   * Open a named shape (clicked in the LIBRARY) in the main view, restoring the
+   * construction history that first produced it. Falls back to the named-polyhedron
+   * database (a single-entry history) for shapes with no saved timeline — e.g. the
+   * pre-discovered tetrahedron, or any shape exposed by the reveal-all cheat.
+   */
+  openNamed(name: string): void {
+    let entries: HistoryEntry[];
+    let index: number;
+    let fallback = false; // a database-built solid (no saved timeline) — relax it
+    const saved = this.historyStore.get(name);
+    if (saved) {
+      entries = deserializeHistory(saved).entries;
+      index = entries.length - 1;
+    } else {
+      // No user-made timeline (e.g. opened via reveal-all): synthesize the
+      // tetrahedron-rooted construction chain from the named-polyhedron database, so
+      // it still imports "with its history from a tetrahedron".
+      const steps = historyStepsFor(name);
+      const np = namedPolyhedronFor(name);
+      if (!steps || !np) return;
+      const opts = { scheme: np.scheme, strategy: config.solver.defaultStrategy };
+      entries = steps.map((s): HistoryEntry => {
+        const id = identify(s.poly);
+        return {
+          poly: s.poly.clone(),
+          label: s.label,
+          name: id.name,
+          displayName: id.name ?? s.label,
+          op: null,
+          invalid: false,
+          isSeed: s.isSeed,
+          options: { ...opts },
+        };
+      });
+      index = entries.length - 1;
+      fallback = true;
+    }
+    this.history.replaceAll(entries, index);
+    // Render + re-identify the target entry (also restores its color scheme +
+    // strategy and clears any in-progress drag / selection / solver).
+    this.restore(this.history.list[this.history.current]);
+    this.renderHistory();
+    // A library open can precede the user's first edit, so make sure every panel
+    // is revealed (idempotent if they already are).
+    this.firstEdit = false;
+    this.onFirstEdit();
+    this.panel.reveal();
+    // A database-built solid isn't regularized; relax it into its canonical form
+    // (a saved timeline's last state is already relaxed, so skip it there).
+    if (fallback) this.relax();
   }
 
   /** The view options (scheme + strategy) currently in effect, for the history. */
@@ -1147,16 +1214,30 @@ export class DragController {
     const { name, signature } = identify(poly);
     this.lastName = name;
     this.lastSignature = signature;
+    let justDiscovered: string | null = null;
     if (discover && !this.invalid && name) {
       const { isNew, first } = this.discoveries.add(name);
       this.shapes.setCount(this.discoveries.count);
-      if (isNew) this.shapes.markNew();
+      if (isNew) {
+        this.shapes.markNew();
+        justDiscovered = name;
+      }
       if (config.discovery.enabled && isNew) this.celebrate(name, first);
     }
     // Record the result against the current history entry (invalid states show no
     // name). This also runs for the seed root and on restore — both harmless.
     this.history.annotate(this.history.current, this.invalid ? null : name, this.invalid);
     this.renderHistory();
+    // Save the timeline that just produced a brand-new shape (so the LIBRARY can
+    // reopen it here with its history). Done after annotate, so the current entry
+    // already carries its name/displayName.
+    if (justDiscovered) {
+      this.historyStore.save(
+        justDiscovered,
+        this.history.list.slice(0, this.history.current + 1),
+        this.history.list[0]?.label ?? "",
+      );
+    }
     // Show the derived history name (modifier + nearest known ancestor) when the
     // shape isn't a known polyhedron; fall back to the raw identify result.
     const display = this.history.list[this.history.current]?.displayName ?? name;

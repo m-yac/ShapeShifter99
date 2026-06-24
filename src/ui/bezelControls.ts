@@ -25,6 +25,10 @@ export interface BezelControlHandlers {
 }
 
 export class BezelControls {
+  /** The "Help & Info" button element, exposed so the help dialog can tell a click
+   *  on it apart from a click-anywhere-to-dismiss. */
+  readonly helpButton: HTMLElement;
+
   constructor(bezel: HTMLElement, handlers: BezelControlHandlers) {
     const bar = document.createElement("div");
     bar.className = "bezel-controls";
@@ -35,7 +39,8 @@ export class BezelControls {
     const ledEl = document.createElement("div");
     ledEl.className = "led";
     led.setElement(ledEl);
-    left.append(ledEl, this.button("Help & Info", handlers.onHelp));
+    this.helpButton = this.button("Help & Info", handlers.onHelp);
+    left.append(ledEl, this.helpButton);
 
     // Right group: the "Save" label + the PNG / STL buttons.
     const right = document.createElement("div");
